@@ -63,5 +63,11 @@ def get_model(model_name, args):
     elif name == "simplecil":
         from models.simplecil import SimpleCIL
         return SimpleCIL(args)
+    elif name == "replay_mrfa":
+        from models.replay_mrfa import Replaymrfa
+        return Replaymrfa(args)
+    elif name == "icarl_mrfa":
+        from models.icarl_mrfa import iCaRLmrfa
+        return iCaRLmrfa(args)
     else:
         assert 0
