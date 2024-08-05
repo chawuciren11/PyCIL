@@ -1,11 +1,93 @@
 import logging
 import numpy as np
-from PIL import Image
+import torch
+import random
+from typing import Any, Callable, Iterable, List, Optional, Sequence, Type, Union
+from PIL import Image, ImageFilter, ImageOps
 from torch.utils.data import Dataset
 from torchvision import transforms
 from utils.data import iCIFAR10, iCIFAR100, iImageNet100, iImageNet1000
 from tqdm import tqdm
 
+class GaussianBlur:
+    def __init__(self, sigma: Sequence[float] = [0.1, 2.0]):
+        """Gaussian blur as a callable object.
+
+        Args:
+            sigma (Sequence[float]): range to sample the radius of the gaussian blur filter.
+                Defaults to [0.1, 2.0].
+        """
+
+        self.sigma = sigma
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        """Applies gaussian blur to an input image.
+
+        Args:
+            x (torch.Tensor): an image in the tensor format.
+
+        Returns:
+            torch.Tensor: returns a blurred image.
+        """
+
+        sigma = random.uniform(self.sigma[0], self.sigma[1])
+        x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
+        return x
+
+class Solarization:
+    """Solarization as a callable object."""
+
+    def __call__(self, img: Image) -> Image:
+        """Applies solarization to an input image.
+
+        Args:
+            img (Image): an image in the PIL.Image format.
+
+        Returns:
+            Image: a solarized image.
+        """
+
+        return ImageOps.solarize(img)
+
+cifar_transform = transforms.Compose(
+    [
+        transforms.RandomResizedCrop(
+            (32, 32),
+            scale=(0.75, 1.0),
+            interpolation=transforms.InterpolationMode.BICUBIC,
+        ),
+        transforms.RandomApply(
+            [transforms.ColorJitter(0.8, 0.8, 0.8, 0.2)], p=0.8
+        ),
+        # transforms.ColorJitter(brightness=63 / 255),
+        transforms.RandomGrayscale(p=0.2),
+        transforms.RandomApply([GaussianBlur()], p=.0),
+        transforms.RandomApply([Solarization()], p=.0),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=(0.5071, 0.4867, 0.4408), std=(0.2675, 0.2565, 0.2761)),
+    ]
+)
+
+imagenet_transform = transforms.Compose(
+            [
+                transforms.RandomResizedCrop(
+                    224,
+                    scale=(0.08, 1.0),
+                    interpolation=transforms.InterpolationMode.BICUBIC,
+                ),
+                transforms.RandomApply(
+                    [transforms.ColorJitter(0.8, 0.8, 0.8, 0.2)],
+                    p=0.8,
+                ),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.RandomApply([GaussianBlur()], p=.5),
+                transforms.RandomApply([Solarization()], p=.0),
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.228, 0.224, 0.225)),
+            ]
+        )
 class DataManager(object):
     def __init__(self, dataset_name, shuffle, seed, init_cls, increment):
         self.dataset_name = dataset_name
@@ -262,6 +344,49 @@ class DummyDataset(Dataset):
 
         return idx, image, label
 
+class AugmentMemoryDataset(Dataset):
+    def __init__(self, images, labels, trsf, index_offset=0, use_path=False):
+        assert len(images) == len(labels), "Data size error!"
+        self.images = images
+        self.labels = labels
+        self.trsf = trsf
+        self.use_path = use_path
+        self.index_offset = index_offset
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        if self.use_path:
+            image = self.trsf(pil_loader(self.images[idx]))
+        else:
+            image = self.trsf(Image.fromarray(self.images[idx]))
+        label = self.labels[idx]
+
+        return idx + self.index_offset, image, label
+
+class DualAugmentDataset(Dataset):
+    def __init__(self, images, labels, trsf, use_path=False):
+        assert len(images) == len(labels), "Data size error!"
+        self.images = images
+        self.labels = labels
+        self.trsf = trsf
+        self.use_path = use_path
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        if self.use_path:
+            image = pil_loader(self.images[idx])
+        else:
+            image = Image.fromarray(self.images[idx])
+
+        image_1 = self.trsf(image)
+        image_2 = self.trsf(image)
+        label = self.labels[idx]
+
+        return idx, (image_1, image_2), label
 
 def _map_new_class_index(y, order):
     return np.array(list(map(lambda x: order.index(x), y)))
